@@ -31,7 +31,7 @@ class MDP():
 
 
 class weighted_rmdp():
-    def __init__(self,name, mdp, iters, p_bar, type,delta, p_samples, test_samples,true_model):
+    def __init__(self,name, mdp, iters, p_bar, type,delta, p_samples, test_samples,true_model, original_data=None,seed=None, nsa=None):
         """
         :param name: name of experiment
         :param mdp: nominal mdp
@@ -43,7 +43,7 @@ class weighted_rmdp():
         :param test_samples: test transition model samples MxSxAxS
         :param true_model: true transition model SxAxS
         """
-        self.name  = name + "-" + type + "-" + str(delta)
+        self.name  = "new"+name + "-" + type + "-" + str(delta) + "-" + str(seed)
 
         if os.path.exists("logs/") is False:
             os.mkdir("logs/")
@@ -51,10 +51,12 @@ class weighted_rmdp():
         if os.path.exists(self.dir) is False:
             os.mkdir(self.dir)
         self.w = np.ones(mdp.ns)
+        self.nsa = nsa
         self.ns = mdp.ns
         self.mdp = mdp
         self.na = mdp.na
         self.gamma = mdp.gamma
+        self.original_data = original_data
         self.value = np.zeros(self.ns)
         self.test_samples = test_samples
         self.iters=iters
@@ -66,6 +68,7 @@ class weighted_rmdp():
         self.true_model = true_model
         self.mean_transition = self.compute_mean(p_samples)
         self.covariance = self.compute_covariance(p_samples)
+
 
 
     def compute_mean(self, p_samples):
@@ -270,63 +273,51 @@ class weighted_rmdp():
         return value, policy
 
 
+    def compute_size_hoeffding(self):
+        temp = (self.ns * self.na * (2 ** self.ns)) / self.delta
+        log_temp = np.log(temp)
+        sizes = np.zeros((self.ns,self.na))
+        for idx in range(self.ns):
+            for jdx in range(self.na):
 
-    # def robust_value_iteration(self,size,weights,eps=1e-3):
-    #     oldval = None
-    #     value = np.random.uniform(0,1,(self.ns))
-    #     iter=0
-    #     policy=None
-    #     while(oldval is None or np.max(np.abs(oldval-value))>eps):
-    #         policy = np.zeros((self.ns,self.na))
-    #         m = Model()
-    #
-    #         psa = m.addVars((self.ns, self.na, self.ns), vtype=GRB.CONTINUOUS, lb=-GRB.INFINITY,
-    #                         ub=GRB.INFINITY, name="transition")
-    #         psa_abs = m.addVars((self.ns, self.na, self.ns), vtype=GRB.CONTINUOUS, lb=-GRB.INFINITY,
-    #                             ub=GRB.INFINITY, name="abs_transition")
-    #
-    #         psa_temp = m.addVars((self.ns, self.na, self.ns), vtype=GRB.CONTINUOUS, lb=0,
-    #                             ub=GRB.INFINITY, name="temp_transition")
-    #
-    #         m.setObjective(gp.quicksum(psa[idx, jdx, kdx] * (self.mdp.rewards[idx, jdx, kdx] + self.gamma *
-    #                                                          value[kdx]) for kdx in np.arange(self.ns) for jdx in
-    #                                    np.arange(self.na) for idx in np.arange(self.ns)), GRB.MINIMIZE)
-    #
-    #         for idx in range(self.ns):
-    #             for jdx in range(self.na):
-    #
-    #                 for kdx in np.arange(self.ns):
-    #                     m.addConstr(psa_abs[idx, jdx, kdx] ==  psa[idx,jdx,kdx]-self.pbar[idx,jdx,kdx],
-    #                                 "c1" + str(idx) + str(jdx) + str(kdx))
-    #                     m.addConstr(psa_temp[idx, jdx, kdx] == gp.abs_(psa_abs[idx,jdx,kdx]),
-    #                                 "c2" + str(idx) + str(jdx) + str(kdx))
-    #
-    #                 m.addConstr(gp.quicksum(weights[idx,jdx,kdx]* psa_temp[idx,jdx,kdx] for kdx in range(self.ns)) <= size[idx,jdx],"c3" + str(idx) + str(jdx))
-    #                 # m.addConstr(gp.quicksum(self.w[idx,jdx,kdx]* psa_abs[idx,jdx,kdx]  for kdx in range(self.ns)) >= -1.0*self.size[idx,jdx],"c3" + str(idx) + str(jdx))
-    #
-    #                 m.addConstr(gp.quicksum(psa[idx,jdx,kdx] for kdx in range(self.ns))==1.0,"c4" + str(idx) + str(jdx))
-    #                 for kdx in range(self.ns):
-    #                     m.addConstr(psa[idx,jdx,kdx]>=0,"c5" + str(idx) + str(jdx)+ str(kdx))
-    #
-    #         m.optimize()
-    #         p = psa.x
-    #
-    #         qsa_ = self.mdp.rewards + self.mdp.gamma * value.reshape((1,1,-1))
-    #         qsa_temp = qsa_.reshape((-1,self.ns))
-    #         qsa = np.sum(p.reshape(-1,self.ns)*qsa_temp,-1).reshape((self.ns,self.na))
-    #         oldval = value
-    #         value = np.max(qsa,axis=-1)
-    #         actions = np.argmax(qsa,axis=-1)
-    #         policy[np.arange(self.ns),actions.flatten()]=1.0
-    #
-    #
-    #         print("iter",iter)
-    #         print("old val - value", np.max(np.abs(oldval-value)))
-    #         iter+=1
-    #
-    #     ret = np.sum(self.mdp.p0.flatten() * value.flatten())
-    #     print("var robust returns ", ret)
-    #     return value, policy
+                nsa = self.nsa
+                sizes[idx,jdx]= np.sqrt((2.0/(max(1.0,nsa[idx,jdx])))*log_temp)
+        return sizes
+
+    def compute_size_optimized(self):
+        temp = (self.ns * self.na * self.ns) / self.delta
+        log_temp = np.log(temp)
+        sizes = np.zeros((self.ns, self.na))
+        for idx in range(self.ns):
+            for jdx in range(self.na):
+                nsa = self.nsa
+                sizes[idx, jdx] = np.sqrt((2.0 / (max(nsa[idx,jdx],1))) * log_temp)
+        return sizes
+
+    def compute_hoeffding(self,type):
+        """
+        Computes the value function for the unweighted BCR RMDP
+        :param type: optimized naive
+        :return: value function |S| and policy |SxA|
+        """
+
+        weights = np.ones((self.ns,self.na,self.ns))
+        if type=="optimized":
+            size = self.compute_size_optimized()
+        else:
+            size = self.compute_size_hoeffding()
+
+        #l1 norm ball robust value iteration
+        value, policy = self.robust_value_iteration(size,weights)
+
+        policy_name = self.dir + "/" + type + "_hoeffding_policy.npy"
+        np.save(policy_name, np.array(policy))
+        value_name = self.dir + "/" + type + "_hoeffding_value.npy"
+        np.save(value_name, np.array(value))
+        return value, policy
+
+
+
 
 
     def robust_value_iteration(self,size,weights,eps=1e-3):
@@ -390,6 +381,8 @@ class weighted_rmdp():
             print("robust value iter",iter)
             print("old val - value", np.max(np.abs(oldval-value)))
             iter+=1
+            if iter > 2000:
+                break
 
         ret = np.sum(self.mdp.p0.flatten() * value.flatten())
         print("var robust returns ", ret)
@@ -458,6 +451,8 @@ class weighted_rmdp():
             print("robust value iter",iter)
             print("old val - value", np.max(np.abs(oldval-value)))
             iter+=1
+            if iter > 2000:
+                break
 
         ret = np.sum(self.mdp.p0.flatten() * value.flatten())
         print("var robust returns ", ret)
@@ -584,6 +579,8 @@ class weighted_rmdp():
                 if np.max(np.abs(vold - v)) < eps:
                     break
             iter += 1
+            if iter > 2000:
+                break
             print("asymptotic var robust iter", iter)
             vold = copy.deepcopy(v)
         ret = np.sum(self.mdp.p0.flatten() * v.flatten())
@@ -627,12 +624,158 @@ class weighted_rmdp():
                 if np.max(np.abs(vold - v)) < eps:
                     break
             iter +=1
+            if iter > 2000:
+                break
             print("var robust iter",iter)
             vold = copy.deepcopy(v)
         ret = np.sum(self.mdp.p0.flatten()* v.flatten())
         print("var robust returns*** ",ret)
         policy_name = self.dir + "/" + "var_policy.npy"
         val_name = self.dir + "/" + "var_value.npy"
+        np.save(val_name, np.array(v))
+        np.save(policy_name, np.array(policy))
+
+        return v, policy
+
+    def compute_cvar(self, rets, alpha):
+        rets = np.array(rets)
+        var_alpha = np.percentile(rets, alpha)
+        cvar = rets[rets <= var_alpha].mean()
+        return cvar
+
+
+
+
+
+
+    def cvar_robust_value_iteration(self, eps=1e-3):
+        """
+        Implementation of generalized VaR value iteration
+        :param eps: value iteration error
+        :return: value function |S| and policy |SxA|
+        """
+        nsamples = self.p_samples.shape[0]
+        v = np.random.uniform(0, 1, self.ns)
+        # v = np.zeros((self.ns))
+
+        vold = None
+        iter = 0
+        while True:
+            policy = np.zeros((self.ns, self.na))
+            for s in range(self.ns):
+                res = []
+                for a in range(self.na):
+                    values = []
+
+                    for sid in range(nsamples):
+                        val = np.dot(self.p_samples[sid, s, a, :].flatten(),
+                                     self.mdp.rewards[s, a, :] + self.mdp.gamma * v.flatten())
+                        values.append(val)
+                    cvar = self.compute_cvar(values,self.alpha)
+                    res.append(cvar)
+                v[s] = np.max(res)
+                policy[s, np.argmax(res)] = 1.0
+            if vold is not None:
+                if np.max(np.abs(vold - v)) < eps:
+                    break
+            iter += 1
+            if iter> 2000:
+                break
+            print("cvar robust iter", iter)
+            vold = copy.deepcopy(v)
+        ret = np.sum(self.mdp.p0.flatten() * v.flatten())
+        print("cvar robust returns*** ", ret)
+        policy_name = self.dir + "/" + "cvar_policy.npy"
+        val_name = self.dir + "/" + "cvar_value.npy"
+        np.save(val_name, np.array(v))
+        np.save(policy_name, np.array(policy))
+
+        return v, policy
+
+    def soft_robust_value_iteration(self, eps=1e-4):
+        """
+        Implementation of generalized VaR value iteration
+        :param eps: value iteration error
+        :return: value function |S| and policy |SxA|
+        """
+        nsamples = self.p_samples.shape[0]
+        v = np.random.uniform(0, 1, self.ns)
+        # v = np.zeros((self.ns))
+
+        vold = None
+        iter = 0
+        while True:
+            policy = np.zeros((self.ns, self.na))
+            for s in range(self.ns):
+                res = []
+                for a in range(self.na):
+                    values = []
+
+                    for sid in range(nsamples):
+                        val = np.dot(self.p_samples[sid, s, a, :].flatten(),
+                                     self.mdp.rewards[s, a, :] + self.mdp.gamma * v.flatten())
+                        values.append(val)
+                    mean_value = np.mean(values)
+                    res.append(mean_value)
+                v[s] = np.max(res)
+                policy[s, np.argmax(res)] = 1.0
+            if vold is not None:
+                if np.max(np.abs(vold - v)) < eps:
+                    break
+            iter += 1
+            if iter > 2000:
+                break
+            print("cvar robust iter", iter)
+            vold = copy.deepcopy(v)
+        ret = np.sum(self.mdp.p0.flatten() * v.flatten())
+        print("cvar robust returns*** ", ret)
+        policy_name = self.dir + "/" + "softrobust_policy.npy"
+        val_name = self.dir + "/" + "softrobust_value.npy"
+        np.save(val_name, np.array(v))
+        np.save(policy_name, np.array(policy))
+
+        return v, policy
+
+
+    def worst_robust_value_iteration(self, eps=1e-4):
+        """
+        Implementation of generalized VaR value iteration
+        :param eps: value iteration error
+        :return: value function |S| and policy |SxA|
+        """
+        nsamples = self.p_samples.shape[0]
+        v = np.random.uniform(0, 1, self.ns)
+        # v = np.zeros((self.ns))
+
+        vold = None
+        iter = 0
+        while True:
+            policy = np.zeros((self.ns, self.na))
+            for s in range(self.ns):
+                res = []
+                for a in range(self.na):
+                    values = []
+
+                    for sid in range(nsamples):
+                        val = np.dot(self.p_samples[sid, s, a, :].flatten(),
+                                     self.mdp.rewards[s, a, :] + self.mdp.gamma * v.flatten())
+                        values.append(val)
+                    minimum = np.min(values)
+                    res.append(minimum)
+                v[s] = np.max(res)
+                policy[s, np.argmax(res)] = 1.0
+            if vold is not None:
+                if np.max(np.abs(vold - v)) < eps:
+                    break
+            iter += 1
+            if iter > 2000:
+                break
+            print("cvar robust iter", iter)
+            vold = copy.deepcopy(v)
+        ret = np.sum(self.mdp.p0.flatten() * v.flatten())
+        print("cvar robust returns*** ", ret)
+        policy_name = self.dir + "/" + "worstrobust_policy.npy"
+        val_name = self.dir + "/" + "worstrobust_value.npy"
         np.save(val_name, np.array(v))
         np.save(policy_name, np.array(policy))
 
@@ -687,6 +830,21 @@ def validate_transitionp(p, ns, na):
 
     return True
 
+def load_nsa(path, ns, na):
+    try:
+        filepath = path + "/samples.csv"
+        df = pd.read_csv(filepath)
+    except:
+        return None
+    nsa = np.zeros((ns,na,ns))
+    lent = len(df)
+    for idx in range(lent):
+        s = df['idstatefrom'][idx]
+        a = df['idaction'][idx]
+        ns = df['idstateto'][idx]
+        nsa[s,a,ns]+=1
+    print("nsa", nsa)
+    return nsa
 
 def load_initial(path):
     df = pd.read_csv(path + "/initial.csv")
@@ -702,8 +860,8 @@ def load_parameters(path):
     gamma = df['value'][0]
     return gamma
 
-def load_train_data(path):
-    df = pd.read_csv(path + "/training.csv")
+def load_train_data(path,seed=0):
+    df = pd.read_csv(path + "/training_" + str(seed) + ".csv")
     idstatefrom = df['idstatefrom']
     idaction = df['idaction']
     idstateto = df['idstateto']
@@ -723,10 +881,11 @@ def load_train_data(path):
         s_ = idstateto[idx]
         psamples[id,s,a,s_]= probability[idx]
         rewards[id,s,a,s_] = reward[idx]
+    nsa = load_nsa(path,ns,na)
 
 
 
-    return psamples, rewards
+    return psamples, rewards, nsa
 
 
 def load_test_data(path):
@@ -774,88 +933,25 @@ def load_true(path):
         rewards[s, a, s_] = reward[idx]
     return psample, rewards
 
-# def compute_all(env, method, delta):
-#     """
-#
-#     :param env:
-#     :param method:
-#     :param delta:
-#     :return:
-#     """
-#     name = env + "-" + str(delta)
-#     path = "Domains/" + env
-#     initial = load_initial(path)
-#     gamma = load_parameters(path)
-#     psamples, rewards = load_train_data(path)
-#     psamples_test, rewards_test = load_test_data(path)
-#     true_model, reward = load_true(path)
-#     shape = psamples.shape
-#     pbar = np.mean(psamples, 0)
-#     true = validate_transitionp(psamples, shape[1], shape[2])
-#
-#     mdp = MDP(initial, psamples.shape[1], psamples.shape[2], reward, true_model, gamma)
-#     rmdp = weighted_rmdp(name, mdp, 1000, true_model, "l1", delta, psamples, psamples_test)
-#     if method=="var":
-#         v1, policy1 = rmdp.var_robust_value_iteration()
-#         print("policy 1", policy1)
-#         test_ret1 = rmdp.evaluate_all(policy1, mdp.rewards,method)
-#         print("VaR percentile Returns", np.percentile(np.mean(test_ret1), delta))
-#         train_ret1 = rmdp.evaluate_all(policy1, mdp.rewards, method,test=False)
-#         print("VaR percentile Returns", np.percentile(np.mean(train_ret1), delta))
-#
-#
-#     if method=="asymptoticvar":
-#         v8, policy8 = rmdp.asymptotic_var_value_iteration()
-#         print("policy 1", policy8)
-#         test_ret8 = rmdp.evaluate_all(policy8, mdp.rewards,method)
-#         print("Asymptotic VaR percentile Returns", np.percentile(np.mean(test_ret8), delta))
-#         train_ret8 = rmdp.evaluate_all(policy8, mdp.rewards, method,test=False)
-#         print("Asymptotic VaR percentile Returns", np.percentile(np.mean(train_ret8), delta))
-#
-#     elif method=="naive_bcr_l1":
-#
-#         v2, policy2 = rmdp.compute_naive_bcr("l1")
-#         print("policy 2", policy2)
-#         test_ret2 = rmdp.evaluate_all(policy2, mdp.rewards,method)
-#         print("Naive bcr percentile Returns", np.percentile(np.mean(test_ret2), delta))
-#         train_ret2 = rmdp.evaluate_all(policy2, mdp.rewards, method, test=False)
-#         print("Naive bcr percentile Returns", np.percentile(np.mean(train_ret2), delta))
-#
-#     elif method=="weighted_bcr_l1":
-#
-#         v3, policy3 = rmdp.compute_optimized_bcr("l1")
-#         print("policy 3", policy3)
-#         test_ret3 = rmdp.evaluate_all(policy3, mdp.rewards,method)
-#         print("Optimized bcr percentile Returns", np.percentile(np.mean(test_ret3), delta))
-#         train_ret3 = rmdp.evaluate_all(policy3, mdp.rewards, method,test=False)
-#         print("Optimized bcr percentile Returns", np.percentile(np.mean(train_ret3), delta))
-#
-#     elif method=="naive_bcr_linf":
-#
-#         v4, policy4 = rmdp.compute_naive_bcr("linf")
-#         print("policy 4", policy4)
-#         test_ret4 = rmdp.evaluate_all(policy4, mdp.rewards,method)
-#         print("naive bcr percentile Returns linf", np.percentile(np.mean(test_ret4), delta))
-#         test_ret4 = rmdp.evaluate_all(policy4, mdp.rewards, method, test=False)
-#         print("naive bcr percentile Returns linf", np.percentile(np.mean(test_ret4), delta))
-#
-#     else:
-#         v5, policy5 = rmdp.compute_optimized_bcr("linf")
-#
-#         print("policy 5", policy5)
-#         test_ret5 = rmdp.evaluate_all(policy5, mdp.rewards,method)
-#         print("Optimized bcr percentile Returns linf", np.percentile(np.mean(test_ret5), delta))
-#         test_ret5 = rmdp.evaluate_all(policy5, mdp.rewards, method, test=False)
-#         print("Optimized bcr percentile Returns linf", np.percentile(np.mean(test_ret5), delta))
-#
 
 
-def load_all(env,delta):
+
+def load_all(env,delta,seed, nsa=None):
+
     name = env + "-" + str(delta)
     path = "Domains/" + env
     initial = load_initial(path)
     gamma = load_parameters(path)
-    psamples, rewards = load_train_data(path)
+    psamples, rewards, nsa = load_train_data(path,seed)
+    if env == "inventory":
+        s = rewards.shape[0]
+        a = rewards.shape[1]
+        nsa = np.ones((s,a))*4
+    else:
+        nsa = np.sum(nsa,2)
+
+
+
     psamples_test, rewards_test = load_test_data(path)
     true_model, reward = load_true(path)
     shape = psamples.shape
@@ -864,123 +960,92 @@ def load_all(env,delta):
 
 
     mdp = MDP(initial,psamples.shape[1], psamples.shape[2], reward,pbar, gamma)
-    rmdp = weighted_rmdp(name,mdp, 1000, pbar, "l1", delta, psamples,psamples_test,true_model)
-
-    v8, policy8 = rmdp.asymptotic_var_value_iteration()
-    v1, policy1 = rmdp.var_robust_value_iteration()
+    rmdp = weighted_rmdp(name,mdp, 1500, pbar, "l1", delta, psamples,psamples_test,true_model,seed=seed, nsa=nsa)
 
 
-    v4, policy4 = rmdp.compute_naive_bcr("linf")
-    v5, policy5 = rmdp.compute_optimized_bcr("linf",v4)
-    v2, policy2  = rmdp.compute_naive_bcr("l1")
-    v3, policy3 = rmdp.compute_optimized_bcr("l1",v2)
-    v6, policy6 = rmdp.compute_true_value()
-    v7, policy7 = rmdp.compute_mean_policy_value()
+    all_policies=[]
+    # v8, policy8 = rmdp.asymptotic_var_value_iteration()
+    # all_policies.append(("asymptoticvar",policy8,v8))
+    #
+    # v1, policy1 = rmdp.var_robust_value_iteration()
+    # all_policies.append(("var",policy1,v1))
+    #
+    # v9, policy9 = rmdp.cvar_robust_value_iteration()
+    # all_policies.append(("cvar",policy9,v9))
+    #
+    # v12, policy12 = rmdp.soft_robust_value_iteration()
+    # all_policies.append(("softrobust", policy12, v12))
+    #
+    # v13, policy13 = rmdp.worst_robust_value_iteration()
+    # all_policies.append(("worstrobust", policy13, v13))
+    #
+
+    # v2, policy2 = rmdp.compute_naive_bcr("l1")
+    # all_policies.append(("naive_bcr_l1", policy2, v2))
+    # #
+    # v3, policy3 = rmdp.compute_optimized_bcr("l1", v2)
+    # all_policies.append(("weighted_bcr_l1", policy3, v3))
+
+    # if env=="inventory":
+    v11, policy11  = rmdp.compute_hoeffding("optimized")
+    all_policies.append(("optimized_hoeffding", policy11, v11))
+
+    v10, policy10 = rmdp.compute_hoeffding("naive")
+    all_policies.append(("naive_hoeffding", policy10, v10))
+
+
+    # v4, policy4 = rmdp.compute_naive_bcr("linf")
+    # all_policies.append(("naive_bcr_linf",policy4,v4))
+    #
+    # v5, policy5 = rmdp.compute_optimized_bcr("linf",v4)
+    # all_policies.append(("weighted_bcr_linf",policy5,v5))
+    #
+
+    #
+    #
+    # v6, policy6 = rmdp.compute_true_value()
+    # all_policies.append(("true_model",policy6,v6))
+    #
+    # v7, policy7 = rmdp.compute_mean_policy_value()
+    # all_policies.append(("mean_model",policy7,v7))
+    #
+
+
+    # policy11=None
+    # policy10 = None
+
+    # rmdp.evaluate_true_model(policy6,true_model)
+
+
+    for res in all_policies:
+
+        method = res[0]
+        # if env!="inventory" and "hoeffding" in method:
+        #     continue
+        policy_ = res[1]
+        value = res[2]
+        train_rets = rmdp.evaluate_all(policy_, mdp.rewards, method, test=False)
+        test_rets = rmdp.evaluate_all(policy_, mdp.rewards, method, test=True)
+        print(str(method))
+        print("train percentile returns",np.percentile(train_rets, delta))
+        print("test percentile returns",np.percentile(test_rets, delta))
+        rmdp.compute_value_true_model(policy_, method)
+        rmdp.evaluate_true_model(policy_,true_model)
+        # print("true value",)
 
 
 
-    print("delta",delta)
-    print("policy 8",policy8)
-    print("policy 1",policy1)
-    print("policy 2",policy2)
-    print("policy 3", policy3)
-    print("policy 4", policy4)
-    print("policy 5", policy5)
-    print("policy 6", policy6)
-    print("policy 7", policy7)
 
 
-    method = "var"
-    train_ret1 = rmdp.evaluate_all(policy1, mdp.rewards,method, test=False)
-    method = "asymptoticvar"
-    train_ret8 = rmdp.evaluate_all(policy8, mdp.rewards, method, test=False)
-
-    method = "naive_bcr_l1"
-    train_ret2 = rmdp.evaluate_all(policy2, mdp.rewards,method, test=False)
-    method = "weighted_bcr_l1"
-    train_ret3 = rmdp.evaluate_all(policy3, mdp.rewards,method, test=False)
-    method = "naive_bcr_linf"
-    test_ret4 = rmdp.evaluate_all(policy4, mdp.rewards,method, test=False)
-    method = "weighted_bcr_linf"
-    test_ret5 = rmdp.evaluate_all(policy5, mdp.rewards,method, test=False)
-    method = "true_model"
-    test_ret6 = rmdp.evaluate_all(policy6, mdp.rewards, method, test=False)
-    method = "mean_model"
-    test_ret7 = rmdp.evaluate_all(policy7, mdp.rewards, method, test=False)
-
-    print("VaR percentile Returns", np.percentile(train_ret1, delta))
-    print("Asymptotic VaR percentile Returns", np.percentile(train_ret8, delta))
-
-    print("Naive bcr percentile Returns", np.percentile(train_ret2, delta))
-    print("Optimized bcr percentile Returns", np.percentile(train_ret3, delta))
-    print("naive bcr percentile Returns linf", np.percentile(test_ret4, delta))
-    print("Optimized bcr percentile Returns linf", np.percentile(test_ret5, delta))
-    print("True model", np.percentile(test_ret6, delta))
-    print("Mean model", np.percentile(test_ret7, delta))
-
-    method = "var"
-    test_ret1 = rmdp.evaluate_all(policy1, mdp.rewards, method, test=True)
-
-    method = "asymptoticvar"
-    test_ret8 = rmdp.evaluate_all(policy8, mdp.rewards, method, test=True)
-
-    method = "naive_bcr_l1"
-    test_ret2 = rmdp.evaluate_all(policy2, mdp.rewards, method, test=True)
-    method = "weighted_bcr_l1"
-    test_ret3 = rmdp.evaluate_all(policy3, mdp.rewards, method, test=True)
-    method = "naive_bcr_linf"
-    test_ret4 = rmdp.evaluate_all(policy4, mdp.rewards, method, test=True)
-    method = "weighted_bcr_linf"
-    test_ret5 = rmdp.evaluate_all(policy5, mdp.rewards, method, test=True)
-    method = "true_model"
-    test_ret6 = rmdp.evaluate_all(policy6, mdp.rewards, method, test=True)
-    method = "mean_model"
-    test_ret7 = rmdp.evaluate_all(policy7, mdp.rewards, method, test=True)
-    print("VaR percentile Returns", np.percentile(train_ret1, delta))
-    print("Asymptotic VaR percentile Returns", np.percentile(train_ret8, delta))
-
-    print("Naive bcr percentile Returns", np.percentile(train_ret2, delta))
-    print("Optimized bcr percentile Returns", np.percentile(train_ret3, delta))
-    print("naive bcr percentile Returns linf", np.percentile(test_ret4, delta))
-    print("Optimized bcr percentile Returns linf", np.percentile(test_ret5, delta))
-    print("True model", np.percentile(test_ret6, delta))
-    print("Mean model", np.percentile(test_ret7, delta))
-    rmdp.evaluate_true_model(policy6,true_model)
-
-    method = "var"
-    train_ret1 = rmdp.compute_value_true_model(policy1,method)
-
-    method = "asymptoticvar"
-    train_ret8 = rmdp.compute_value_true_model(policy8, method)
 
 
-    method = "naive_bcr_l1"
-    train_ret2 = rmdp.compute_value_true_model(policy2,method)
-    method = "weighted_bcr_l1"
-    train_ret3 = rmdp.compute_value_true_model(policy3,method)
-    method = "naive_bcr_linf"
-    test_ret4 = rmdp.compute_value_true_model(policy4,method)
-    method = "weighted_bcr_linf"
-    test_ret5 = rmdp.compute_value_true_model(policy5,method)
-    method = "true_model"
-    test_ret6 = rmdp.compute_value_true_model(policy6,method)
-    method = "mean_model"
-    test_ret7 = rmdp.compute_value_true_model(policy7,method)
+
+
+
 
 
 
 
     #
-
-if __name__=='__main__':
-    args = parse()
-    domain = args.env
-    delta = float(args.delta)
-
-    method = args.method
-
-    deltas=[0.2,0.15,0.1,0.05,0.01]
-    for delta in deltas:
-        load_all(domain,delta=delta)
 
 

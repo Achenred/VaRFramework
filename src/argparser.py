@@ -15,4 +15,9 @@ def parse():
     parser.add_argument('--delta', type=float, default=0.2,
                         help='discount parameter')
 
+    parser.add_argument('--seed', type=float, default=0,
+                        help='seed')
+    parser.add_argument('--nsa', type=float, default=4,
+                        help='nsa')
+
     return parser.parse_args()
