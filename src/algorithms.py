@@ -964,27 +964,27 @@ def load_all(env,delta,seed, nsa=None):
 
 
     all_policies=[]
-    # v8, policy8 = rmdp.asymptotic_var_value_iteration()
-    # all_policies.append(("asymptoticvar",policy8,v8))
-    #
-    # v1, policy1 = rmdp.var_robust_value_iteration()
-    # all_policies.append(("var",policy1,v1))
-    #
-    # v9, policy9 = rmdp.cvar_robust_value_iteration()
-    # all_policies.append(("cvar",policy9,v9))
-    #
-    # v12, policy12 = rmdp.soft_robust_value_iteration()
-    # all_policies.append(("softrobust", policy12, v12))
-    #
-    # v13, policy13 = rmdp.worst_robust_value_iteration()
-    # all_policies.append(("worstrobust", policy13, v13))
-    #
+    v8, policy8 = rmdp.asymptotic_var_value_iteration()
+    all_policies.append(("asymptoticvar",policy8,v8))
 
-    # v2, policy2 = rmdp.compute_naive_bcr("l1")
-    # all_policies.append(("naive_bcr_l1", policy2, v2))
-    # #
-    # v3, policy3 = rmdp.compute_optimized_bcr("l1", v2)
-    # all_policies.append(("weighted_bcr_l1", policy3, v3))
+    v1, policy1 = rmdp.var_robust_value_iteration()
+    all_policies.append(("var",policy1,v1))
+
+    v9, policy9 = rmdp.cvar_robust_value_iteration()
+    all_policies.append(("cvar",policy9,v9))
+
+    v12, policy12 = rmdp.soft_robust_value_iteration()
+    all_policies.append(("softrobust", policy12, v12))
+
+    v13, policy13 = rmdp.worst_robust_value_iteration()
+    all_policies.append(("worstrobust", policy13, v13))
+
+
+    v2, policy2 = rmdp.compute_naive_bcr("l1")
+    all_policies.append(("naive_bcr_l1", policy2, v2))
+    #
+    v3, policy3 = rmdp.compute_optimized_bcr("l1", v2)
+    all_policies.append(("weighted_bcr_l1", policy3, v3))
 
     # if env=="inventory":
     v11, policy11  = rmdp.compute_hoeffding("optimized")
@@ -994,27 +994,27 @@ def load_all(env,delta,seed, nsa=None):
     all_policies.append(("naive_hoeffding", policy10, v10))
 
 
-    # v4, policy4 = rmdp.compute_naive_bcr("linf")
-    # all_policies.append(("naive_bcr_linf",policy4,v4))
-    #
-    # v5, policy5 = rmdp.compute_optimized_bcr("linf",v4)
-    # all_policies.append(("weighted_bcr_linf",policy5,v5))
-    #
+    v4, policy4 = rmdp.compute_naive_bcr("linf")
+    all_policies.append(("naive_bcr_linf",policy4,v4))
 
-    #
-    #
-    # v6, policy6 = rmdp.compute_true_value()
-    # all_policies.append(("true_model",policy6,v6))
-    #
-    # v7, policy7 = rmdp.compute_mean_policy_value()
-    # all_policies.append(("mean_model",policy7,v7))
-    #
+    v5, policy5 = rmdp.compute_optimized_bcr("linf",v4)
+    all_policies.append(("weighted_bcr_linf",policy5,v5))
+
+
+
+
+    v6, policy6 = rmdp.compute_true_value()
+    all_policies.append(("true_model",policy6,v6))
+
+    v7, policy7 = rmdp.compute_mean_policy_value()
+    all_policies.append(("mean_model",policy7,v7))
+
 
 
     # policy11=None
     # policy10 = None
 
-    # rmdp.evaluate_true_model(policy6,true_model)
+    rmdp.evaluate_true_model(policy6,true_model)
 
 
     for res in all_policies:
