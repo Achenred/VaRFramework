@@ -1,5 +1,5 @@
 # VaR Framework
-[Code for VaR Framework: Percentile Criterion Optimization in Offline Reinforcement Learning
+Code for VaR Framework: Percentile Criterion Optimization in Offline Reinforcement Learning
 
 ## Running
 Experiment scripts can be found in *src/*.
