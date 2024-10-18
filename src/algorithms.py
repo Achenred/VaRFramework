@@ -6,11 +6,45 @@ import numpy as np
 from gurobipy import GRB
 import gurobipy as gp
 import pandas as pd
-from argparser import *
+# from argparser import *
 from scipy.stats import norm
 np.random.seed(10)
 import random
 random.seed(10)
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from scipy.special import softmax
+
+# Define the QNetwork
+class QNetwork(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_dim=64):
+        hidden_dim = state_dim
+        super(QNetwork, self).__init__()
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, action_dim)
+
+    def forward(self, state):
+        x = torch.relu(self.fc1(state))
+        x = torch.relu(self.fc2(x))
+        q_values = self.fc3(x)
+        return q_values
+
+# Define the PolicyNetwork
+class PolicyNetwork(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_dim=64):
+        super(PolicyNetwork, self).__init__()
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, action_dim)
+
+    def forward(self, state):
+        x = torch.relu(self.fc1(state))
+        x = torch.relu(self.fc2(x))
+        logits = self.fc3(x)
+        policy = torch.softmax(logits, dim=-1)
+        return policy
 
 class MDP():
     def __init__(self, initial, states, actions, rewards, transitions, gamma):
@@ -31,7 +65,7 @@ class MDP():
 
 
 class weighted_rmdp():
-    def __init__(self,name, mdp, iters, p_bar, type,delta, p_samples, test_samples,true_model, original_data=None,seed=None, nsa=None):
+    def __init__(self,name, mdp, iters, p_bar, type,delta,gamma, p_samples, test_samples,true_model, original_data=None,seed=None, nsa=None):
         """
         :param name: name of experiment
         :param mdp: nominal mdp
@@ -261,6 +295,12 @@ class weighted_rmdp():
 
         weights = np.ones((self.ns,self.na,self.ns))
         size = self.compute_size(self.p_samples, weights,type)
+        # print(self.p_samples)
+        # size = np.round(size, 2)
+        # print(size)
+        # import sys
+        # sys.exit()
+
 
         if type =="l1":
             value, policy = self.robust_value_iteration(size,weights)
@@ -281,6 +321,11 @@ class weighted_rmdp():
             for jdx in range(self.na):
 
                 nsa = self.nsa
+                print(nsa)
+                print(nsa[idx,jdx])
+                print(max(1.0,nsa[idx,jdx]))
+                import sys
+                sys.exit()
                 sizes[idx,jdx]= np.sqrt((2.0/(max(1.0,nsa[idx,jdx])))*log_temp)
         return sizes
 
@@ -487,6 +532,7 @@ class weighted_rmdp():
         :param test: True if to be evaluated on test transition models
         :return: returns |NxS|
         """
+
         if test == True:
             psamples_test = self.test_samples
         else:
@@ -501,6 +547,7 @@ class weighted_rmdp():
             r = np.sum(np.sum(pi_p_temp* rew,-1),-1)
             ret = np.matmul(pi_p_inverse,r)
             returns.append(np.dot(self.mdp.p0, ret))
+
         if test is True:
             fname = self.dir + "/" + type + "_test_rets.npy"
         else:
@@ -529,6 +576,61 @@ class weighted_rmdp():
         fname = self.dir + "/" + "true_returns.npy"
         np.save(fname, np.array(returns))
         return returns
+
+    def simulate_policy(self, env,policy, num_episodes=1000, render_final=True):
+        """Interact in the environment using the learned policy.
+
+        This function is used to interact in the environment and get the average
+        reward over of number of episodes and show the last episode if specified.
+        The trajectories are also stored of the state action pairs in each episode.
+
+        :param env: environment class which the algorithm will attempt to learn.
+        :param num_episodes: Integer number of episodes to run in environment for.
+        :param render_final: Bool indicator of whether to show the last episode.
+
+        :return t
+        """
+
+        # List tracking rewards of learning algorithm over episodes.
+        episode_rewards = []
+
+        # List of episode trajectories containing state action pairs.
+        trajectories = []
+
+        total_reward = 0
+
+        for episode in range(num_episodes):
+
+            epsiode_trajectory = []
+
+            done = False
+            episode_reward = 0
+            s = env.reset()
+            iter = 0
+            while done != True and iter < 100:
+                # Show the environment to the screen.
+                if episode == num_episodes - 1 and render_final:
+                    env.render()
+
+                a = np.random.choice(len(policy[s]), p=policy[s])
+                epsiode_trajectory.append((s, a))
+
+                s, reward, done, info, _ = env.step(a)
+                # print(episode,a,s,reward,done)
+                episode_reward += reward
+                iter +=1
+                # if np.random.rand() < 0.1:  # Assuming a terminal state with a 10% chance
+                #     done = True
+
+            trajectories.append(epsiode_trajectory)
+            episode_rewards.append(episode_reward)
+            total_reward += episode_reward
+
+        avg_reward = total_reward / float(num_episodes)
+        # std_reward = np.std(total_reward)
+
+        return episode_rewards
+
 
     def compute_asymptotic_var(self,s,a,v):
         """
@@ -573,6 +675,7 @@ class weighted_rmdp():
                     buffer_r = self.mdp.rewards[s, a, :] + self.mdp.gamma * v.flatten()
                     var = self.compute_asymptotic_var(s,a,buffer_r)
                     res.append(var)
+
                 v[s] = np.max(res)
                 policy[s, np.argmax(res)] = 1.0
             if vold is not None:
@@ -610,16 +713,23 @@ class weighted_rmdp():
             policy = np.zeros((self.ns,self.na))
             for s in range(self.ns):
                 res=[]
+
                 for a in range(self.na):
                     values = []
 
+
                     for sid in range(nsamples):
-                        val = np.dot(self.p_samples[sid,s,a,:].flatten(),self.mdp.rewards[s,a,:] + self.mdp.gamma *v.flatten())
+
+                        val = np.dot(self.p_samples[sid,s,a,:].flatten(),self.mdp.rewards[s,a,:] + v.flatten())*self.mdp.gamma
                         values.append(val)
+
                     var = np.percentile(values,self.alpha)
                     res.append(var)
+                # if s == 19:
+                #     print(res)
                 v[s] = np.max(res)
                 policy[s,np.argmax(res)]=1.0
+
             if vold is not None:
                 if np.max(np.abs(vold - v)) < eps:
                     break
@@ -636,6 +746,178 @@ class weighted_rmdp():
         np.save(policy_name, np.array(policy))
 
         return v, policy
+
+    def parametric_robustEDAC(self, num_episodes=1000, lr_actor=0.01, lr_critic=0.1, tau=1., eps=1e-4, batch_size=32):
+        nsamples = self.p_samples.shape[0]
+
+        # Initialize Q-network and policy network
+        q_network = QNetwork(self.ns, self.na)
+        policy_network = PolicyNetwork(self.ns, self.na)
+
+        # Optimizers
+        q_optimizer = optim.Adam(q_network.parameters(), lr=lr_critic)
+        policy_optimizer = optim.Adam(policy_network.parameters(), lr=lr_actor)
+
+        batch_size = self.ns
+
+        for episode in range(num_episodes):
+            policy_stable = True
+
+            # Sample a mini-batch of states
+            indices = np.random.choice(self.ns, batch_size, replace=False)
+            states = torch.tensor(indices, dtype=torch.float32).unsqueeze(1)
+
+            # Forward pass through Q-network and policy network
+            q_values = q_network(states)
+            policy = policy_network(states)
+
+            q_value_updates = []
+            for sid in range(nsamples):
+                next_state_values = torch.matmul(
+                    torch.tensor(self.p_samples[sid, :, :, :].reshape(self.ns, self.na), dtype=torch.float32),
+                    torch.tensor(self.mdp.rewards + self.mdp.gamma * q_values.detach().numpy(), dtype=torch.float32)
+                )
+                q_value_updates.append(next_state_values)
+
+            q_value_updates = torch.stack(q_value_updates, dim=0)
+            q_ensemble = torch.matmul(policy, q_value_updates)
+            q_value_update = torch.tensor(np.percentile(q_ensemble.detach().numpy(), self.alpha, axis=0),
+                                          dtype=torch.float32)
+
+            # Update Q-network
+            loss_critic = (q_values - q_value_update).pow(2).mean()
+            print(f"Episode {episode}, Loss: {loss_critic.item()}")
+
+            q_optimizer.zero_grad()
+            loss_critic.backward()
+            q_optimizer.step()
+
+            # Update policy network using softmax
+            exp_q_values = torch.exp(q_values / tau)
+            policy = exp_q_values / torch.sum(exp_q_values, dim=1, keepdim=True)
+            loss_actor = -torch.sum(policy * torch.log(policy + 1e-8))  # Entropy regularization
+            policy_optimizer.zero_grad()
+            loss_actor.backward()
+            policy_optimizer.step()
+
+            # Check for policy stability
+            if torch.abs(q_values - q_value_update).max().item() > eps:
+                policy_stable = False
+
+            if policy_stable:
+                break
+
+        return q_network, policy_network
+
+    def var_robust_AC_mixed_actions_robustEDAC(self, num_episodes=1000, lr_actor=0.01,
+                                                      lr_critic=0.01, tau=1., eps=1e-4):
+        nsamples = self.p_samples.shape[0]
+
+        # Initialize Q-tables and policy table
+        q_table = np.random.rand(self.ns, self.na)
+        policy_table = np.full((self.ns, self.na), 1.0 / self.na)
+
+        # Initialize convergence monitoring variables
+        old_q_table = np.copy(q_table)
+        policy_stable = False
+        iter_count = 0
+
+        while not policy_stable and iter_count < num_episodes:
+            policy_stable = True
+            iter_count += 1
+
+
+            for s in range(self.ns):
+
+                temp = []
+                for a in range(self.na):
+
+                    values = []
+                    for sid in range(nsamples):
+                        next_state_values = np.dot(
+                            self.p_samples[sid, s, a, :].flatten(),
+                            self.mdp.rewards[s, a, :] +  q_table[:, a] *self.mdp.gamma
+                        )
+                        values.append(next_state_values)
+                    temp.append(values)
+                temp = np.array(temp)
+                q_ensemble = np.dot(policy_table[s], temp)
+                q_value_update = np.percentile(q_ensemble, self.alpha)
+                for a in range(self.na):
+                    q_table[s, a] += lr_critic * (q_value_update - old_q_table[s, a])
+                # if s == 19:
+                #     print(q_table[s])
+                #     print(old_q_table[s])
+                #     print(policy_table[s])
+                #     print("***")
+                # Update policy using softmax
+
+                # exp_q_values = np.exp(q_table[s] / tau)
+                # policy_table[s] = exp_q_values / np.sum(exp_q_values)
+                policy_table[s] = np.round(softmax(q_table[s]),3)
+
+                # Check for policy stability
+                if np.abs(old_q_table[s, a] - q_table[s, a]) > eps:
+                    policy_stable = False
+
+                # if (iter_count + 1) % 50 == 0:
+                #     old_q_table = q_table.copy()
+                #
+                #     # Update old Q-table for the next iteration
+                #     for a in range(self.na):
+                old_q_table[s, a] = q_table[s, a]
+
+        return q_table, policy_table
+
+    def var_robust_AC_mixed_actions_EDAC(self, num_episodes=1000, lr_actor=0.01,
+                                                      lr_critic=0.1, tau=1., eps=1e-4):
+        nsamples = self.p_samples.shape[0]
+
+        # Initialize Q-tables and policy table
+        q_table = np.zeros((self.ns, self.na))
+        policy_table = np.full((self.ns, self.na), 1.0 / self.na)
+
+        # Initialize convergence monitoring variables
+        old_q_table = np.copy(q_table)
+        policy_stable = False
+        iter_count = 0
+
+        while not policy_stable and iter_count < num_episodes:
+            policy_stable = True
+            iter_count += 1
+
+            for s in range(self.ns):
+                q_values = np.zeros(self.na)
+                # Calculate Q-values for each action using each critic
+                for a in range(self.na):
+                    values = []
+                    for sid in range(nsamples):
+                        next_state_values = np.dot(
+                            self.p_samples[sid, s, a, :].flatten(),
+                            self.mdp.rewards[s, a, :] + self.mdp.gamma * q_table[:, a]
+                        )
+                        values.append(next_state_values)
+
+                    q_values[a] = np.percentile(values, self.alpha)
+                # Update the Q-table using the robust Q-values
+                q_value_update = np.max(q_values)
+                for a in range(self.na):
+                    q_table[s, a] += lr_critic * (q_value_update - old_q_table[s, a])
+
+                policy_table[s] = np.round(softmax(q_table[s]), 3)
+
+                # # Update policy using softmax
+                # exp_q_values = np.exp(q_values / tau)
+                # policy_table[s] = exp_q_values / np.sum(exp_q_values)
+
+                # Check for policy stability
+                if np.abs(old_q_table[s, a] - q_table[s, a]) > eps:
+                    policy_stable = False
+
+                # Update old Q-table for the next iteration
+                old_q_table[s, a] = q_table[s, a]
+
+        return q_table, policy_table
 
     def compute_cvar(self, rets, alpha):
         rets = np.array(rets)
@@ -883,8 +1165,6 @@ def load_train_data(path,seed=0):
         rewards[id,s,a,s_] = reward[idx]
     nsa = load_nsa(path,ns,na)
 
-
-
     return psamples, rewards, nsa
 
 
@@ -913,8 +1193,12 @@ def load_test_data(path):
     return psamples, rewards
 
 
-def load_true(path):
-    df = pd.read_csv(path + "/true.csv")
+def load_true(model,path):
+    csv_file = str(path) + "discrete_domains/domains/" + str(model) + ".csv"
+    df = pd.read_csv(csv_file)
+    columns_to_reduce = ['idstatefrom', 'idaction', 'idstateto']
+    df[columns_to_reduce] = df[columns_to_reduce] - 1
+
     idstatefrom = df['idstatefrom']
     idaction = df['idaction']
     idstateto = df['idstateto']
@@ -931,10 +1215,14 @@ def load_true(path):
         s_ = idstateto[idx]
         psample[s, a, s_] = probability[idx]
         rewards[s, a, s_] = reward[idx]
-    return psample, rewards
 
 
+    ids = np.unique(idstatefrom)
+    probs = np.ones(len(ids)) / len(ids)
+    init = np.zeros(len(ids))
+    init[ids] = probs
 
+    return psample, rewards, init
 
 def load_all(env,delta,seed, nsa=None):
 
@@ -960,7 +1248,7 @@ def load_all(env,delta,seed, nsa=None):
 
 
     mdp = MDP(initial,psamples.shape[1], psamples.shape[2], reward,pbar, gamma)
-    rmdp = weighted_rmdp(name,mdp, 1500, pbar, "l1", delta, psamples,psamples_test,true_model,seed=seed, nsa=nsa)
+    rmdp = weighted_rmdp(name,mdp, 1500, pbar, "l1", delta,gamma, psamples,psamples_test,true_model,seed=seed, nsa=nsa)
 
 
     all_policies=[]
